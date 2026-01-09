@@ -1,12 +1,14 @@
 # party-news-weekly handoff
 
 ## 목적
+
 - 여러 정당 사이트의 목록을 자동 수집해 Notion DB에 적재
 - Notion DB 형태: `정당 / 카테고리 / 제목 / 날짜 / 링크`
 - 상세 페이지 본문을 Notion 페이지에 문단 블록으로 저장
 - 실행 주기: 매일 10시 / 18시 / 02시 (3회)
 
 ## 현재 상태 요약
+
 - 크롤러 엔트리: `src/main.py`
 - 타깃 목록: `config/sources.json`
 - 실행 예:
@@ -17,6 +19,7 @@
   - 특정 id: `python3 src/main.py --only-id jinbo_category_286 --sample 10`
 
 ## 구현된 사이트별 파서
+
 - 기본소득당: `/news/briefing`, `/news/press`(언론보도 외부 링크)
 - 사회민주당: `/news/briefing` (카드형/onclick 대응)
 - 조국혁신당: JS 렌더링 → API(`api.rebuildingkoreaparty.kr/api/board/list`)로 수집
@@ -30,6 +33,7 @@
 - 정의당: board_view 링크 수집 (bbs_code=JS21, 브리핑룸)
 
 ## Notion 업로드
+
 - 환경변수 필요:
   - `NOTION_TOKEN`
   - `NOTION_DATABASE_ID` (예: `2e1c9c3e833b803b8accf5fb620224bb`)
@@ -42,6 +46,7 @@
   - 날짜가 없으면 상세 페이지에서 보정
 
 ## 남은 이슈/할 일
+
 - Notion 업로드 시 사이트별 상세 본문/날짜 누락 발생 가능
   - JS 렌더링/HTML 구조 다른 사이트는 추가 파서 필요
 - 현재 본문 추출 셀렉터는 공통 후보만 사용
@@ -50,7 +55,8 @@
   - macOS `launchd`로 10/18/02시 실행 예정
 
 ## 환경 변수 설정 예
-```
+
+```bash
 export NOTION_TOKEN="새로 발급한 시크릿"
 export NOTION_DATABASE_ID="2e1c9c3e833b803b8accf5fb620224bb"
 ```
