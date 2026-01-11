@@ -43,7 +43,7 @@ jobs:
         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
       run: |
-        python src/main.py sample --notion
+        python src/main.py --sample 3 --notion
 
     - name: Upload logs (if any)
       if: always()
