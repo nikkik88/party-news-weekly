@@ -74,20 +74,32 @@ def get_session() -> requests.Session:
 def fetch_html(
     session: requests.Session,
     url: str,
-    timeout: int = 20,
+    timeout: int = 30,
     headers: Optional[dict[str, str]] = None,
     encoding: Optional[str] = None,
+    retries: int = 3,
 ) -> str:
     merged_headers = dict(session.headers)
     if headers:
         merged_headers.update(headers)
-    r = session.get(url, timeout=timeout, headers=merged_headers)
-    r.raise_for_status()
-    if encoding == "auto":
-        return decode_bytes(r.content)
-    if encoding:
-        r.encoding = encoding
-    return r.text
+
+    last_error = None
+    for attempt in range(retries):
+        try:
+            r = session.get(url, timeout=timeout, headers=merged_headers)
+            r.raise_for_status()
+            if encoding == "auto":
+                return decode_bytes(r.content)
+            if encoding:
+                r.encoding = encoding
+            return r.text
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_error = e
+            if attempt < retries - 1:
+                time.sleep(2 * (attempt + 1))  # 2초, 4초, 6초 대기
+                continue
+            raise
+    raise last_error
 
 
 def fetch_json(
