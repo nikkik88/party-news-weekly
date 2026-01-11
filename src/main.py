@@ -234,6 +234,11 @@ DETAIL_DOMAIN_ALLOWLIST = {
     "justice21.org",
 }
 
+# 크롤링에서 제외할 URL 목록 (이용약관, 개인정보처리방침 등)
+EXCLUDED_URLS = {
+    "https://www.justice21.org/newhome/board/board_view.html?num=109587",  # 정의당 이용약관
+}
+
 
 def build_paragraph_blocks(paragraphs: List[str]) -> List[dict]:
     """
@@ -465,6 +470,8 @@ def upload_to_notion(items: List[ListItem]) -> None:
         if not it.title or not it.url:
             continue
         if it.url in seen_urls:
+            continue
+        if it.url in EXCLUDED_URLS:
             continue
         seen_urls.add(it.url)
 

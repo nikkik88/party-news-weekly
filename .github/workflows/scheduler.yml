@@ -43,7 +43,7 @@ jobs:
         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
       run: |
-        python src/main.py --sample 3 --notion
+        python src/main.py --sample 3 --notion --date-from 2026-01-01
 
     - name: Upload logs (if any)
       if: always()
