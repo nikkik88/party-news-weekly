@@ -43,7 +43,8 @@ jobs:
         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
       run: |
-        python src/main.py --sample 3 --notion --date-from 2026-01-01
+        # 진보당은 GitHub Actions IP가 차단되어 제외 (로컬에서 별도 실행)
+        python src/main.py --sample 3 --notion --date-from 2026-01-01 --exclude jinboparty
 
     - name: Upload logs (if any)
       if: always()

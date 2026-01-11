@@ -1442,6 +1442,7 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/sources.json", help="targets config JSON path")
     p.add_argument("--only", default="", help="run only one site id (e.g., justice21)")
+    p.add_argument("--exclude", default="", help="comma-separated site ids to exclude (e.g., jinboparty)")
     p.add_argument("--only-category", default="", help="run only one category name (exact match)")
     p.add_argument("--only-id", default="", help="run only one target id (exact match)")
     p.add_argument("--sample", type=int, default=15, help="how many sample items to print")
@@ -1457,6 +1458,9 @@ def main() -> int:
     targets = load_targets(args.config)
     if args.only:
         targets = [t for t in targets if t.site == args.only]
+    if args.exclude:
+        exclude_sites = {x.strip() for x in args.exclude.split(",") if x.strip()}
+        targets = [t for t in targets if t.site not in exclude_sites]
     if args.only_category:
         targets = [t for t in targets if t.category == args.only_category]
     if args.only_id:
