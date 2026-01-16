@@ -42,6 +42,66 @@ class ListItem:
     title: str
     url: str
     date: Optional[str] = None
+    content: Optional[str] = None  # 조국혁신당 등 API에서 본문을 가져오는 경우
+
+
+# ----------------------------
+# URL normalization (중복 방지용)
+# ----------------------------
+
+# 중복 체크 시 무시할 쿼리 파라미터 (페이지네이션, 세션 등)
+IGNORABLE_QUERY_PARAMS = {
+    "pageid", "page", "nPage", "nPageSize", "pageSize",
+    "q", "keyword", "search", "keyword_type",
+    "t", "ref", "utm_source", "utm_medium", "utm_campaign",
+}
+
+
+def normalize_url(url: str) -> str:
+    """URL을 정규화하여 중복 비교에 사용.
+
+    - scheme을 https로 통일
+    - www 제거
+    - trailing slash 제거
+    - 쿼리 파라미터 정렬
+    - 불필요한 파라미터 제거
+    - fragment 제거
+    """
+    if not url:
+        return ""
+
+    parsed = urlparse(url)
+
+    # scheme 통일 (http -> https)
+    scheme = "https"
+
+    # www 제거
+    netloc = parsed.netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+
+    # path 정규화 (trailing slash 제거, 단 root는 유지)
+    path = parsed.path.rstrip("/") or "/"
+
+    # 쿼리 파라미터 정규화
+    query_params = parse_qs(parsed.query, keep_blank_values=False)
+    # 불필요한 파라미터 제거 및 정렬
+    filtered_params = {
+        k: v for k, v in query_params.items()
+        if k.lower() not in IGNORABLE_QUERY_PARAMS
+    }
+    # 정렬된 쿼리 문자열 생성
+    sorted_query = urlencode(
+        {k: v[0] if len(v) == 1 else v for k, v in sorted(filtered_params.items())},
+        doseq=True
+    )
+
+    # fragment 제거하고 재조합
+    normalized = f"{scheme}://{netloc}{path}"
+    if sorted_query:
+        normalized += f"?{sorted_query}"
+
+    return normalized
 
 
 # ----------------------------
@@ -474,24 +534,36 @@ def upload_to_notion(items: List[ListItem]) -> None:
         return
 
     session = get_session()
-    seen_urls = set()
+    seen_normalized = set()  # 정규화된 URL로 중복 체크
     created = 0
     skipped = 0
 
     for it in items:
         if not it.title or not it.url:
             continue
-        if it.url in seen_urls:
+
+        # URL 정규화하여 중복 체크
+        normalized = normalize_url(it.url)
+        if normalized in seen_normalized:
             continue
-        if it.url in EXCLUDED_URLS:
+        if it.url in EXCLUDED_URLS or normalized in EXCLUDED_URLS:
             continue
-        seen_urls.add(it.url)
+        seen_normalized.add(normalized)
 
         try:
+            # Notion에서도 원본 URL과 정규화된 URL 모두 체크
             if notion_find_by_url(token, database_id, it.url):
                 skipped += 1
                 continue
-            detail_date, paragraphs = fetch_detail_for_notion(session, it.url)
+
+            # ListItem에 content가 이미 있으면 (조국혁신당 API 등) 사용, 없으면 fetch
+            if it.content:
+                # API에서 가져온 본문이 있는 경우
+                paragraphs = [p.strip() for p in it.content.split('\n') if p.strip()]
+                detail_date = it.date
+            else:
+                detail_date, paragraphs = fetch_detail_for_notion(session, it.url)
+
             if detail_date and not it.date:
                 it = ListItem(
                     party=it.party,
@@ -499,6 +571,7 @@ def upload_to_notion(items: List[ListItem]) -> None:
                     title=it.title,
                     url=it.url,
                     date=detail_date,
+                    content=it.content,
                 )
             page_id = notion_create_page(token, database_id, it, title_prop, props)
             blocks = build_paragraph_blocks(paragraphs)
@@ -662,6 +735,8 @@ def list_basicincomeparty(session: requests.Session, t: Target) -> List[ListItem
                 continue
 
             title = a.get_text(" ", strip=True)
+            # "New" 표시 제거
+            title = re.sub(r'\bNew\b', '', title, flags=re.IGNORECASE).strip()
             if not title:
                 continue
 
@@ -686,6 +761,8 @@ def list_basicincomeparty(session: requests.Session, t: Target) -> List[ListItem
 
     for a in soup.select("a[href]"):
         title = a.get_text(" ", strip=True)
+        # "New" 표시 제거
+        title = re.sub(r'\bNew\b', '', title, flags=re.IGNORECASE).strip()
         href = a.get("href")
         if not href:
             continue
@@ -915,19 +992,19 @@ def list_rebuildingkoreaparty(session: requests.Session, t: Target) -> List[List
     parsed_list = urlparse(t.list_url)
     path = parsed_list.path.rstrip("/")
 
-    category_labels = {
-        "/news/commentary-briefing": "논평브리핑",
-        "/news/press-conference": "기자회견문",
-        "/news/press-release": "보도자료",
+    # URL 경로별 카테고리 ID 매핑 (API에서 카테고리별로 다른 ID 사용)
+    category_id_map = {
+        "/news/commentary-briefing": 7,   # 논평 브리핑
+        "/news/press-conference": 6,       # 기자회견문
+        "/news/press-release": 9,          # 보도자료
     }
 
     api_url = "https://api.rebuildingkoreaparty.kr/api/board/list"
-    expected_label = category_labels.get(path)
-    expected_slug = path.split("/news/")[-1] if "/news/" in path else ""
+    category_id = category_id_map.get(path, 7)  # 기본값 7 (논평 브리핑)
 
     payload = {
         "page": 1,
-        "categoryId": 7,
+        "categoryId": category_id,
         "recordSize": 10,
         "pageSize": 5,
         "order": "recent",
@@ -949,7 +1026,7 @@ def list_rebuildingkoreaparty(session: requests.Session, t: Target) -> List[List
 
     post_path_re = re.compile(r"^/news/[^/]+/\d+$")
 
-    def add_candidate(title: str, href: str, date: Optional[str] = None) -> None:
+    def add_candidate(title: str, href: str, date: Optional[str] = None, content: Optional[str] = None) -> None:
         href = (href or "").strip()
         if not href:
             return
@@ -980,6 +1057,7 @@ def list_rebuildingkoreaparty(session: requests.Session, t: Target) -> List[List
                 title=clean_title,
                 url=abs_url,
                 date=date,
+                content=content,
             )
         )
 
@@ -1001,36 +1079,20 @@ def list_rebuildingkoreaparty(session: requests.Session, t: Target) -> List[List
             continue
         title = row.get("title") or row.get("subject") or ""
         date = extract_date_from_text(str(row.get("createdAt") or row.get("date") or row.get("regDate") or ""))
-        category = (
-            row.get("categoryName")
-            or row.get("boardCategoryName")
-            or row.get("category")
-            or row.get("boardCategory")
-            or row.get("categoryLabel")
-            or row.get("categoryNm")
-            or ""
-        )
+        # API에서 본문 텍스트 추출 (descriptionText 사용)
+        content = row.get("descriptionText") or row.get("description") or ""
 
+        # API가 categoryId로 필터링하므로 추가 카테고리 검증 불필요
         href = row.get("url") or row.get("path") or ""
         if href:
             href = urljoin(t.list_url, href)
-            if expected_slug and f"/news/{expected_slug}/" not in href:
-                if expected_label and category and expected_label in str(category):
-                    pass
-                else:
-                    continue
         else:
             post_id = row.get("id") or row.get("boardId") or row.get("idx")
             if not post_id:
                 continue
             href = f"{parsed_list.scheme}://{parsed_list.netloc}{path}/{post_id}"
 
-        if expected_label and category and expected_label not in str(category):
-            continue
-
-        if debug_enabled(t) and category == "" and expected_label:
-            debug_log(t, f"category field empty, keys: {list(row.keys())[:12]}")
-        add_candidate(title, href, date)
+        add_candidate(title, href, date, content)
 
     return out
 
@@ -1261,14 +1323,11 @@ def list_laborparty(session: requests.Session, t: Target) -> List[ListItem]:
 
 
 def list_kgreens(session: requests.Session, t: Target) -> List[ListItem]:
-    """녹색당 보도자료(press) 목록 페이지에서 글 링크를 수집.
+    """녹색당 목록 페이지에서 글 링크를 수집.
 
-    글 링크는 보통 다음 형태:
-    /press/?bmode=view&idx=...&t=board
-
-    녹색당 사이트는 ul.li_body 구조를 사용하며, 각 ul 안에:
-    - a[href*="bmode=view"] - 제목 링크
-    - li.time - 날짜 정보 (YYYY-MM-DD 형식)
+    녹색당 사이트는 페이지에 따라 다른 구조를 사용:
+    1. ul.li_body 구조 (press, statement 등)
+    2. div.card 구조 (event, address 등)
     """
     html = fetch_html(session, t.list_url)
     soup = BeautifulSoup(html, "html.parser")
@@ -1276,39 +1335,68 @@ def list_kgreens(session: requests.Session, t: Target) -> List[ListItem]:
     out: List[ListItem] = []
     seen = set()
 
-    # Find all ul.li_body elements
-    li_bodies = soup.find_all('ul', class_='li_body')
+    def add_item(href: str, title: str, date: Optional[str] = None) -> None:
+        href = (href or "").strip()
+        if not href or 'bmode=view' not in href:
+            return
+        abs_url = urljoin(t.list_url, href)
+        if abs_url in seen:
+            return
+        title = (title or "").strip()
+        if not title or len(title) < 6:
+            return
+        seen.add(abs_url)
+        out.append(ListItem(party=t.party, category=t.category, title=title, url=abs_url, date=date))
 
+    # 방법 1: ul.li_body 구조 (press, statement 등)
+    li_bodies = soup.find_all('ul', class_='li_body')
     for li_body in li_bodies:
-        # Find the title link within this li_body - look for list_text_title class
         a = li_body.find('a', class_='list_text_title')
+        if not a:
+            a = li_body.find('a', href=lambda x: x and 'bmode=view' in x)
         if not a:
             continue
 
-        href = (a.get("href") or "").strip()
-        if not href:
-            continue
-
-        abs_url = urljoin(t.list_url, href)
-        if abs_url in seen:
-            continue
-
+        href = a.get("href") or ""
         title = a.get_text(" ", strip=True)
-        if not title or len(title) < 6:
-            continue
 
-        # Extract date from li.time element
         date = None
         date_li = li_body.find('li', class_='time')
         if date_li:
-            # Try to get from title attribute first (has full datetime)
             date_text = date_li.get('title', '') or date_li.get_text(strip=True)
             if date_text:
-                # Extract YYYY-MM-DD format
                 date = extract_date_from_text(date_text)
 
-        seen.add(abs_url)
-        out.append(ListItem(party=t.party, category=t.category, title=title, url=abs_url, date=date))
+        add_item(href, title, date)
+
+    # 방법 2: div.card 구조 (event, address 등)
+    if not out:
+        cards = soup.select('div.card a.post_link_wrap[href*="bmode=view"]')
+        for a in cards:
+            href = a.get("href") or ""
+            # 카드 내 제목은 .title 클래스 또는 card-body 내 텍스트
+            title_el = a.select_one('.title')
+            if title_el:
+                title = title_el.get_text(" ", strip=True)
+            else:
+                title = a.get_text(" ", strip=True)
+
+            # 날짜는 카드 내 small 태그에 있을 수 있음
+            date = None
+            card = a.find_parent('div', class_='card')
+            if card:
+                date_el = card.select_one('small, .date, .time')
+                if date_el:
+                    date = extract_date_from_text(date_el.get_text(strip=True))
+
+            add_item(href, title, date)
+
+    # 방법 3: 위 방법 실패 시 모든 bmode=view 링크 수집
+    if not out:
+        for a in soup.find_all('a', href=lambda x: x and 'bmode=view' in x):
+            href = a.get("href") or ""
+            title = a.get_text(" ", strip=True)
+            add_item(href, title)
 
     return out
 
