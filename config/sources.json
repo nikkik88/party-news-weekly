@@ -3,15 +3,8 @@
     "id": "basicincomeparty_briefing",
     "party": "기본소득당",
     "site": "basicincomeparty",
-    "category": "브리핑",
-    "list_url": "https://www.basicincomeparty.kr/news/briefing"
-  },
-  {
-    "id": "basicincomeparty_press",
-    "party": "기본소득당",
-    "site": "basicincomeparty",
-    "category": "언론보도",
-    "list_url": "https://www.basicincomeparty.kr/news/press"
+    "category": "논평",
+    "list_url": "https://www.basicincomeparty.kr/bikr/press"
   },
   {
     "id": "samindang_briefing",

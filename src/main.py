@@ -791,102 +791,71 @@ def extract_href_from_attrs(attrs: dict) -> Optional[str]:
 
 
 def list_basicincomeparty(session: requests.Session, t: Target) -> List[ListItem]:
+    """기본소득당 논평/보도자료 목록 크롤링 (2026-02 개편 후 새 사이트 구조).
+
+    새 구조: /bikr/press 페이지, table tbody tr 행 기반
+    - 카테고리: a.bo_cate_link (논평/보도자료)
+    - 제목/링크: div.bo_tit > a[href]
+    - 날짜: 마지막 td (YYYY.MM.DD. 형식)
+    - 페이지네이션: ?page=N
+    """
     out: List[ListItem] = []
     seen = set()
 
-    # 여러 페이지 크롤링 (최대 3페이지)
+    BASICINCOME_DATE_RE = re.compile(r"(\d{4})\.(\d{2})\.(\d{2})")
+
     max_pages = 3
     for page_num in range(1, max_pages + 1):
         if page_num == 1:
             page_url = t.list_url
         else:
-            page_url = f"{t.list_url}?pageid={page_num}"
+            page_url = f"{t.list_url}?page={page_num}"
 
         html = fetch_html(session, page_url)
         soup = BeautifulSoup(html, "html.parser")
 
         page_items = 0
 
-        # The press page uses a KBoard list with external article links.
-        if "/news/press" in t.list_url:
-            for row in soup.select(".kboard-list tbody tr"):
-                a = row.select_one("td.kboard-list-title a[href]")
-                if not a:
-                    continue
-                href = (a.get("href") or "").strip()
-                if not href:
-                    continue
+        for row in soup.select("table tbody tr"):
+            # 제목과 링크: div.bo_tit > a
+            tit_a = row.select_one("div.bo_tit a[href]")
+            if not tit_a:
+                continue
+            href = (tit_a.get("href") or "").strip()
+            if not href:
+                continue
+            abs_url = urljoin(t.list_url, href)
 
-                title = a.get_text(" ", strip=True)
-                # "New" 표시 제거
-                title = re.sub(r'\bNew\b', '', title, flags=re.IGNORECASE).strip()
-                if not title:
-                    continue
+            title = tit_a.get_text(" ", strip=True)
+            title = re.sub(r'\bNew\b', '', title, flags=re.IGNORECASE).strip()
+            title = re.sub(r'\b새글\b', '', title).strip()
+            if not title:
+                continue
 
-                date = None
-                date_el = row.select_one("td.kboard-list-date")
-                if date_el:
-                    date = extract_date_from_text(date_el.get_text(" ", strip=True))
+            # 카테고리 (논평/보도자료)
+            cate_a = row.select_one("a.bo_cate_link")
+            category = cate_a.get_text(strip=True) if cate_a else t.category
 
-                if href in seen:
-                    continue
-                seen.add(href)
-                out.append(
-                    ListItem(
-                        party=t.party,
-                        category=t.category,
-                        title=title,
-                        url=href,
-                        date=date,
-                    )
-                )
-                page_items += 1
-        else:
-            # 브리핑 페이지도 KBoard 구조 사용
-            for row in soup.select(".kboard-list tbody tr"):
-                a = row.select_one("td.kboard-list-title a[href]")
-                if not a:
-                    continue
-                href = (a.get("href") or "").strip()
-                if not href:
-                    continue
+            # 날짜: 마지막 td (YYYY.MM.DD. 형식)
+            cols = row.find_all("td")
+            date = None
+            if cols:
+                date_text = cols[-1].get_text(strip=True)
+                m = BASICINCOME_DATE_RE.search(date_text)
+                if m:
+                    date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
 
-                abs_url = urljoin(t.list_url, href)
-                parsed = urlparse(abs_url)
+            if abs_url in seen:
+                continue
+            seen.add(abs_url)
 
-                # KBoard real posts only
-                if parsed.path.rstrip("/") not in BASICINCOME_POST_PATHS:
-                    continue
-                q = parsed.query or ""
-                if "mod=document" not in q:
-                    continue
-                if not UID_RE.search(q):
-                    continue
+            out.append(ListItem(party=t.party, category=category, title=title, url=abs_url, date=date))
+            page_items += 1
 
-                title = a.get_text(" ", strip=True)
-                # "New" 표시 제거
-                title = re.sub(r'\bNew\b', '', title, flags=re.IGNORECASE).strip()
-                if not title:
-                    continue
-
-                # 날짜 추출
-                date = None
-                date_el = row.select_one("td.kboard-list-date")
-                if date_el:
-                    date = extract_date_from_text(date_el.get_text(" ", strip=True))
-
-                if abs_url in seen:
-                    continue
-                seen.add(abs_url)
-
-                out.append(ListItem(party=t.party, category=t.category, title=title, url=abs_url, date=date))
-                page_items += 1
-
-        # 페이지에 항목이 없으면 더 이상 크롤링하지 않음
         if page_items == 0:
             break
 
-        time.sleep(0.5)  # 페이지 간 딜레이
+        time.sleep(0.5)
 
     return out
 
